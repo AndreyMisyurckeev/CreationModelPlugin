@@ -1,5 +1,6 @@
 ﻿using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Structure;
 using Autodesk.Revit.UI;
 using System;
 using System.Collections.Generic;
@@ -16,56 +17,106 @@ namespace CreationModelPlugin
         {
             Document doc = commandData.Application.ActiveUIDocument.Document;
 
-            Level level1 = LevelSelect(doc, "Уровень 1");
-            Level level2 = LevelSelect(doc, "Уровень 2");
+            List<Level> listLevel = new FilteredElementCollector(doc)
+                 .OfClass(typeof(Level))
+                 .OfType<Level>()
+                 .ToList();
+
+            Level level1 = listLevel
+                .Where(x => x.Name.Equals("Level 1"))
+                .FirstOrDefault();
+
+            Level level2 = listLevel
+                .Where(x => x.Name.Equals("Level 2"))
+                .FirstOrDefault();
 
             double width = UnitUtils.ConvertToInternalUnits(10000, UnitTypeId.Millimeters);
             double depth = UnitUtils.ConvertToInternalUnits(5000, UnitTypeId.Millimeters);
-            double dx = width / 2;
-            double dy = depth / 2;
 
             Transaction transaction = new Transaction(doc, "Построение стен");
             transaction.Start();
-            for (int i = 0; i < 4; i++)
-            {
-                CreateWall(dx, dy, level1, level2, doc);
-            }
+
+            List<Wall> walls = CreateFourWalls(doc, width, depth, level1, level2);
+            AddDoor(doc, level1, walls[0]);
+            AddWindow(doc, level1, walls[1]);
+            AddWindow(doc, level1, walls[2]);
+            AddWindow(doc, level1, walls[3]);
 
             transaction.Commit();
 
             return Result.Succeeded;
         }
-
-        public Level LevelSelect(Document doc, string levelName)
+        public List<Wall> CreateFourWalls(Document doc, double width, double depth, Level down, Level up)
         {
-            List<Level> listlevel = new FilteredElementCollector(doc)
-           .OfClass(typeof(Level))
-           .OfType<Level>()
-           .ToList();
-            Level leveselect = listlevel
-                            .Where(x => x.Name.Equals(levelName))
-                            .OfType<Level>()
-                            .FirstOrDefault();
-            return leveselect;
-        }
+            double dx = width / 2;
+            double dy = depth / 2;
 
-        public List<Wall> CreateWall(double dx, double dy, Level down, Level up, Document doc)
-        {
-            List<Wall> walls = new List<Wall>();
             List<XYZ> points = new List<XYZ>();
+            points.Add(new XYZ(-dx, -dy, 0));
+            points.Add(new XYZ(dx, -dy, 0));
+            points.Add(new XYZ(dx, dy, 0));
+            points.Add(new XYZ(-dx, dy, 0));
+            points.Add(new XYZ(-dx, -dy, 0));
+
+            List<Wall> walls = new List<Wall>();
             for (int i = 0; i < 4; i++)
             {
-                points.Add(new XYZ(-dx, -dy, 0));
-                points.Add(new XYZ(dx, -dy, 0));
-                points.Add(new XYZ(dx, dy, 0));
-                points.Add(new XYZ(-dx, dy, 0));
-                points.Add(new XYZ(-dx, -dy, 0));
                 Line line = Line.CreateBound(points[i], points[i + 1]);
                 Wall wall = Wall.Create(doc, line, down.Id, false);
                 wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE).Set(up.Id);
                 walls.Add(wall);
             }
             return walls;
+        }
+        private void AddDoor(Document doc, Level level1, Wall wall)
+        {
+            FamilySymbol doorType = new FilteredElementCollector(doc)
+                .OfClass(typeof(FamilySymbol))
+                .OfCategory(BuiltInCategory.OST_Doors)
+                .OfType<FamilySymbol>()
+                .Where(x => x.Name == "0762 x 2032mm")
+                .Where(x => x.FamilyName == "M_Single-Flush")
+                .FirstOrDefault();
+
+            LocationCurve hostCurve = wall.Location as LocationCurve;
+            XYZ point1 = hostCurve.Curve.GetEndPoint(0);
+            XYZ point2 = hostCurve.Curve.GetEndPoint(1);
+            XYZ point = (point1 + point2) / 2;
+
+            if (!doorType.IsActive)
+            {
+                doorType.Activate();
+            }
+
+            doc.Create.NewFamilyInstance(point, doorType, wall, level1, StructuralType.NonStructural);
+        }
+
+
+        private void AddWindow(Document doc, Level level1, Wall wall)
+        {
+            FamilySymbol pasteWindow = new FilteredElementCollector(doc)
+                .OfClass(typeof(FamilySymbol))
+                .OfCategory(BuiltInCategory.OST_Windows)
+                .OfType<FamilySymbol>()
+                .Where(x => x.Name == "0915 x 1830mm")
+                .Where(x => x.FamilyName == "M_Fixed")
+                .FirstOrDefault();
+
+            LocationCurve hostCurve = wall.Location as LocationCurve;
+            XYZ point1 = hostCurve.Curve.GetEndPoint(0);
+            XYZ point2 = hostCurve.Curve.GetEndPoint(1);
+            XYZ point = (point1 + point2) / 2;
+
+            if (!pasteWindow.IsActive)
+            {
+                pasteWindow.Activate();
+            }
+
+            FamilyInstance window =
+            doc.Create.NewFamilyInstance(point, pasteWindow, wall, level1, StructuralType.NonStructural);
+            double height = UnitUtils.ConvertToInternalUnits(800, UnitTypeId.Millimeters);
+            window.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM).Set(height);
+            window.flipFacing();
         }
     }
 }
